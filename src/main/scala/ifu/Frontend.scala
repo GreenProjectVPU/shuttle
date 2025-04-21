@@ -38,6 +38,7 @@ class ShuttleFetchBundle(implicit val p: Parameters) extends Bundle
   val insts         = Output(Vec(fetchWidth, Bits(32.W)))
   val exp_insts     = Output(Vec(fetchWidth, Bits(32.W)))
   val pcs           = Output(Vec(fetchWidth, UInt(vaddrBitsExtended.W)))
+  val ids           = Output(Vec(fetchWidth, UInt(64.W)))
   val mask          = Output(UInt(fetchWidth.W)) // mark which words are valid instructions
   val btb_resp      = Output(Valid(new BTBResp))
   val ras_head      = Output(UInt(log2Ceil(btbParams.nRAS).W))
@@ -125,6 +126,9 @@ class ShuttleFrontendModule(outer: ShuttleFrontend) extends LazyModuleImp(outer)
   val s0_replay_resp = Wire(new TLBResp)
   val s0_replay_ppc = Wire(UInt(paddrBits.W))
 
+  val s0_id = RegInit(0.U(64.W))
+  s0_id := s0_id + Mux(s0_valid, fetchWidth.U, 0.U)
+
   icache.io.req.valid := s0_valid
   icache.io.req.bits := s0_vpc
 
@@ -136,6 +140,7 @@ class ShuttleFrontendModule(outer: ShuttleFrontend) extends LazyModuleImp(outer)
   val s1_ras_head  = WireInit(RegNext(s0_ras_head))
   val s1_valid     = RegNext(s0_valid, false.B)
   val s1_is_replay = RegNext(s0_is_replay)
+  val s1_id        = RegNext(s0_id)
   val f1_clear     = WireInit(false.B)
 
   tlb.io.req.valid      := (s1_valid && !s1_is_replay && !f1_clear && !io.cpu.sfence.valid)
@@ -193,6 +198,7 @@ class ShuttleFrontendModule(outer: ShuttleFrontend) extends LazyModuleImp(outer)
   val s2_is_replay = RegNext(s1_is_replay) && s2_valid
   val s2_xcpt = s2_valid && (s2_tlb_resp.ae.inst || s2_tlb_resp.pf.inst) && !s2_is_replay
   val s2_btb_resp = RegNext(btb.io.resp)
+  val s2_id = RegNext(s1_id)
   val f3_ready = Wire(Bool())
 
   icache.io.s2_kill := s2_xcpt
@@ -267,6 +273,7 @@ class ShuttleFrontendModule(outer: ShuttleFrontend) extends LazyModuleImp(outer)
     val valid = Wire(Bool())
     f2_inst_mask(i) := s2_valid && f2_fetch_mask(i) && valid && !redir_found
     f2_fetch_bundle.pcs(i) := f2_aligned_pc + (i << 1).U - ((f2_fetch_bundle.edge_inst && (i == 0).B) << 1)
+    f2_fetch_bundle.ids(i) := s2_id + i.U
     when (!valid && s2_btb_resp.valid && s2_btb_resp.bits.bridx === i.U) {
       btb.io.flush := true.B
     }

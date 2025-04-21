@@ -9,6 +9,7 @@ import org.chipsalliance.cde.config.Parameters
 import freechips.rocketchip.util._
 
 class ShuttleUOP(implicit p: Parameters) extends CoreBundle {
+  val id = UInt(64.W)
   val nRAS = tileParams.btb.get.nRAS
   val inst = UInt(32.W)
   val raw_inst = UInt(32.W)

@@ -43,6 +43,7 @@ class ShuttleFetchBuffer(implicit p: Parameters) extends CoreModule
     val cond_br = Seq(BNE, BGE, BGEU, BEQ, BLT, BLTU).map(_ === io.enq.bits.exp_insts(i)).orR
     in_uops(i).valid               := io.enq.valid && io.enq.bits.mask(i)
     in_uops(i).bits                := DontCare
+    in_uops(i).bits.id             := io.enq.bits.ids(i)
     in_uops(i).bits.pc             := io.enq.bits.pcs(i)
     in_uops(i).bits.ctrl           := DontCare
     in_uops(i).bits.fp_ctrl        := DontCare
