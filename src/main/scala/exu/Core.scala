@@ -9,12 +9,12 @@ import freechips.rocketchip.util._
 import freechips.rocketchip.rocket._
 import freechips.rocketchip.rocket.Instructions._
 import freechips.rocketchip.rocket.ALU._
-import freechips.rocketchip.trace.{TraceCoreParams, TraceCoreInterface, TraceCoreIngress}
-
+import freechips.rocketchip.trace.{TraceCoreIngress, TraceCoreInterface, TraceCoreParams}
 import shuttle.common._
 import shuttle.ifu._
 import shuttle.util._
 import shuttle.dmem.{ShuttleDCacheIO, ShuttleDTLB}
+import shuttle.trace.KanataTracer
 
 class ShuttleCustomCSRs(implicit p: Parameters) extends freechips.rocketchip.tile.CustomCSRs {
   def marchid = CustomCSR.constant(CSRs.marchid, BigInt(34))
@@ -1371,4 +1371,27 @@ class ShuttleCore(tile: ShuttleTile, edge: TLEdgeOut)(implicit p: Parameters) ex
       com_vcfg.get.valid := false.B
     }
   }
+
+  val kanata = Module(
+    new KanataTracer(fetchWidth, retireWidth, vaddrBitsExtended))
+  kanata.io.clock := clock
+  kanata.io.reset := reset
+  kanata.io.hartid := io.hartid
+  kanata.io.s0id := io.imem.s0_id
+  kanata.io.s1id := io.imem.s1_id
+  kanata.io.s2ids := io.imem.s2_ids
+  kanata.io.s2pcs := io.imem.s2_pcs
+
+  private def connectStageToTracer(dst: Vec[Valid[UInt]], src: Vec[Valid[ShuttleUOP]]): Unit = {
+    for ((d, s) <- dst.zip(src)) {
+      d.valid := s.valid
+      d.bits := s.bits.pc
+    }
+  }
+
+  connectStageToTracer(kanata.io.rrd, rrd_uops)
+  connectStageToTracer(kanata.io.ex, ex_uops_reg)
+  connectStageToTracer(kanata.io.mem, mem_uops_reg)
+  connectStageToTracer(kanata.io.com, com_uops_reg)
+  connectStageToTracer(kanata.io.wb, wb_uops_reg)
 }
