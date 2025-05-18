@@ -19,8 +19,8 @@ class FrontendStageTracer(implicit p: Parameters)
     val flush = Input(Bool())
   })
 
-  addResource("/shuttle/vsrc/KanataTracer.v")
-  addResource("/shuttle/csrc/KanataTracer.cc")
+  addResource("/shuttle/vsrc/kanata_tracer.v")
+  addResource("/shuttle/csrc/kanata_tracer.cc")
 }
 
 class FetchBufferTracer(vaddrBitsExtended: Int)(implicit p: Parameters)
@@ -39,8 +39,8 @@ class FetchBufferTracer(vaddrBitsExtended: Int)(implicit p: Parameters)
     val flush = Input(Bool())
   })
 
-  addResource("/shuttle/vsrc/KanataTracer.v")
-  addResource("/shuttle/csrc/KanataTracer.cc")
+  addResource("/shuttle/vsrc/kanata_tracer.v")
+  addResource("/shuttle/csrc/kanata_tracer.cc")
 }
 
 class ScalarBackendStageTracer(implicit p: Parameters)
@@ -58,8 +58,8 @@ class ScalarBackendStageTracer(implicit p: Parameters)
     val wbPending = Input(Bool())
   })
 
-  addResource("/shuttle/vsrc/KanataTracer.v")
-  addResource("/shuttle/csrc/KanataTracer.cc")
+  addResource("/shuttle/vsrc/kanata_tracer.v")
+  addResource("/shuttle/csrc/kanata_tracer.cc")
 }
 
 object KanataTracer {

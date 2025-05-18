@@ -1,27 +1,47 @@
+import "DPI-C" function void kanata_tracer_params(
+    input int unsigned hartId,
+    input int unsigned fetchWidth,
+    input int unsigned retireWidth,
+    input int unsigned fetchBufferSize
+);
+
 import "DPI-C" function void kanata_tracer_frontend_stage(
-    input int hart_id,
-    input int port_id,
-    input int stage_id,
-    input longint uop_id,
+    input int unsigned hart_id,
+    input int unsigned port_id,
+    input int unsigned stage_id,
+    input longint unsigned uop_id,
     input bit flush
 );
 
 import "DPI-C" function void kanata_tracer_fetch_buffer(
-    input int hart_id,
-    input int port_id,
-    input longint uop_id,
-    input longint uop_pc,
+    input int unsigned hart_id,
+    input int unsigned port_id,
+    input longint unsigned uop_id,
+    input longint unsigned uop_pc,
     input bit flush
 );
 
 import "DPI-C" function void kanata_tracer_scalar_backend_stage(
-    input int hart_id,
-    input int port_id,
-    input int stage_id,
-    input longint uop_id,
+    input int unsigned hart_id,
+    input int unsigned port_id,
+    input int unsigned stage_id,
+    input longint unsigned uop_id,
     input bit flush,
     input bit wb_pending
 );
+
+module KanataTracerParams (
+    input int unsigned hartId,
+    input int unsigned fetchWidth,
+    input int unsigned retireWidth,
+    input int unsigned fetchBufferSize
+);
+
+    initial begin
+        kanata_tracer_params(hartId, fetchWidth, retireWidth, fetchBufferSize);
+    end
+
+endmodule
 
 module FrontendStageTracer (
     input logic clock,
