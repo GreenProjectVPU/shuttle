@@ -62,6 +62,7 @@ class FetchBufferTracer(vaddrBitsExtended: Int)(implicit p: Parameters)
     val hartId = Input(UInt(p(MaxHartIdBits).W))
     val portId = Input(UInt(32.W))
     val uopId = Input(Valid(UInt(64.W)))
+    val uopPc = Input(UInt(vaddrBitsExtended.W))
     val flush = Input(Bool())
   })
 
