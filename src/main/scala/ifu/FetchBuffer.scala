@@ -2,15 +2,14 @@ package shuttle.ifu
 
 import chisel3._
 import chisel3.util._
-
 import freechips.rocketchip.tile._
 import freechips.rocketchip.rocket._
 import freechips.rocketchip.rocket.Instructions._
-import freechips.rocketchip.rocket.{MStatus, BP, BreakpointUnit}
+import freechips.rocketchip.rocket.{BP, BreakpointUnit, MStatus}
 import freechips.rocketchip.util._
-import org.chipsalliance.cde.config.{Parameters}
-
+import org.chipsalliance.cde.config.Parameters
 import shuttle.common._
+import shuttle.trace.KanataTracer
 import shuttle.util._
 
 class ShuttleFetchBuffer(implicit p: Parameters) extends CoreModule
@@ -19,6 +18,7 @@ class ShuttleFetchBuffer(implicit p: Parameters) extends CoreModule
   // this buffer rarely backpresures the frontend
   val numEntries = (retireWidth * 3) + 1
   val io = IO(new Bundle {
+    val hartid = Input(UInt(32.W))
     val enq = Flipped(Decoupled(new ShuttleFetchBundle))
     val deq = Vec(retireWidth, Decoupled(new ShuttleUOP))
     val peek = Vec(retireWidth, Valid(new ShuttleUOP))
@@ -126,4 +126,12 @@ class ShuttleFetchBuffer(implicit p: Parameters) extends CoreModule
     deq_ptr := 1.U
     ram.foreach(_.valid := false.B)
   }
+
+  KanataTracer.fetchBuffer(
+    clock,
+    reset,
+    io.hartid,
+    ram,
+    io.clear
+  )
 }

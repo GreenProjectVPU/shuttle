@@ -2,7 +2,6 @@ package shuttle.ifu
 
 import chisel3._
 import chisel3.util._
-
 import org.chipsalliance.cde.config._
 import freechips.rocketchip.subsystem._
 import freechips.rocketchip.diplomacy._
@@ -11,8 +10,8 @@ import freechips.rocketchip.tilelink._
 import freechips.rocketchip.tile._
 import freechips.rocketchip.util._
 import freechips.rocketchip.util.property._
-
 import shuttle.common._
+import shuttle.trace.KanataTracer
 
 trait HasShuttleFrontendParameters extends HasL1ICacheParameters
 {
@@ -69,6 +68,7 @@ class RASUpdate(implicit p: Parameters) extends CoreBundle()(p) {
 }
 
 class ShuttleFrontendIO(implicit p: Parameters) extends CoreBundle()(p) {
+  val hartid = Output(UInt(32.W))
   val btbParams = tileParams.btb.get
   val redirect_flush = Output(Bool())
   val redirect_val = Output(Bool())
@@ -82,11 +82,6 @@ class ShuttleFrontendIO(implicit p: Parameters) extends CoreBundle()(p) {
   val btb_update = Valid(new ShuttleBTBUpdate)
   val bht_update = Valid(new BHTUpdate)
   val ras_update = Valid(new RASUpdate)
-
-  val s0_id = Input(Valid(UInt(64.W)))
-  val s1_id = Input(Valid(UInt(64.W)))
-  val s2_ids = Input(Vec(fetchWidth, Valid(UInt(64.W))))
-  val s2_pcs = Input(Vec(fetchWidth, UInt(vaddrBitsExtended.W)))
 }
 
 class ShuttleFrontendBundle(val outer: ShuttleFrontend) extends CoreBundle()(outer.p)
@@ -133,11 +128,24 @@ class ShuttleFrontendModule(outer: ShuttleFrontend) extends LazyModuleImp(outer)
   val s0_id = RegInit(0.U(64.W))
   s0_id := s0_id + Mux(s0_valid, fetchWidth.U, 0.U)
 
-  io.cpu.s0_id.valid := s0_valid
-  io.cpu.s0_id.bits := s0_id
-
   icache.io.req.valid := s0_valid
   icache.io.req.bits := s0_vpc
+
+  for (i <- 0 until fetchWidth) {
+    val uopId = Valid(UInt(64.W))
+    uopId.valid := s0_valid
+    uopId.bits := s0_id + i.U
+
+    KanataTracer.frontendStage(
+      KanataTracer.ShuttleFrontendStage.F0,
+      clock,
+      reset,
+      io.cpu.hartid,
+      i.U,
+      uopId,
+      false.asBool
+    )
+  }
 
   // --------------------------------------------------------
   // **** ICache Access (F1) ****
@@ -150,8 +158,21 @@ class ShuttleFrontendModule(outer: ShuttleFrontend) extends LazyModuleImp(outer)
   val s1_id        = RegNext(s0_id)
   val f1_clear     = WireInit(false.B)
 
-  io.cpu.s1_id.valid := s1_valid
-  io.cpu.s1_id.bits := s1_id
+  for (i <- 0 until fetchWidth) {
+    val uopId = Valid(UInt(64.W))
+    uopId.valid := s1_valid
+    uopId.bits := s1_id + i.U
+
+    KanataTracer.frontendStage(
+      KanataTracer.ShuttleFrontendStage.F1,
+      clock,
+      reset,
+      io.cpu.hartid,
+      i.U,
+      uopId,
+      f1_clear
+    )
+  }
 
   tlb.io.req.valid      := (s1_valid && !s1_is_replay && !f1_clear && !io.cpu.sfence.valid)
   tlb.io.req.bits.cmd   := DontCare
@@ -210,6 +231,22 @@ class ShuttleFrontendModule(outer: ShuttleFrontend) extends LazyModuleImp(outer)
   val s2_btb_resp = RegNext(btb.io.resp)
   val s2_id = RegNext(s1_id)
   val f3_ready = Wire(Bool())
+
+  for (i <- 0 until fetchWidth) {
+    val uopId = Valid(UInt(64.W))
+    uopId.valid := s1_valid
+    uopId.bits := s1_id + i.U
+
+    KanataTracer.frontendStage(
+      KanataTracer.ShuttleFrontendStage.F2,
+      clock,
+      reset,
+      io.cpu.hartid,
+      i.U,
+      uopId,
+      f1_clear
+    )
+  }
 
   icache.io.s2_kill := s2_xcpt
 
@@ -284,10 +321,6 @@ class ShuttleFrontendModule(outer: ShuttleFrontend) extends LazyModuleImp(outer)
     f2_inst_mask(i) := s2_valid && f2_fetch_mask(i) && valid && !redir_found
     f2_fetch_bundle.pcs(i) := f2_aligned_pc + (i << 1).U - ((f2_fetch_bundle.edge_inst && (i == 0).B) << 1)
     f2_fetch_bundle.ids(i) := s2_id + i.U
-
-    io.cpu.s2_ids(i).valid := valid
-    io.cpu.s2_ids(i).bits := f2_fetch_bundle.ids(i)
-    io.cpu.s2_pcs(i) := f2_fetch_bundle.pcs(i)
 
     when (!valid && s2_btb_resp.valid && s2_btb_resp.bits.bridx === i.U) {
       btb.io.flush := true.B
@@ -367,6 +400,7 @@ class ShuttleFrontendModule(outer: ShuttleFrontend) extends LazyModuleImp(outer)
   s0_replay_ppc  := s2_ppc
 
   val fb = Module(new ShuttleFetchBuffer)
+  fb.io.hartid := io.cpu.hartid
   fb.io.enq.valid := (s2_valid && !f2_clear &&
     (icache.io.resp.valid || ((s2_tlb_resp.ae.inst || s2_tlb_resp.pf.inst) && !s2_tlb_miss))
   )

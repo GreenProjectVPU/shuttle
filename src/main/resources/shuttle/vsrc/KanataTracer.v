@@ -29,13 +29,14 @@ module FrontendStageTracer (
     input logic [31:0] hartId,
     input logic [31:0] portId,
     input logic [1:0] stageId,
-    input logic [63:0] uopId,
+    input logic uopId_valid,
+    input logic [63:0] uopId_bits,
     input logic flush
 );
 
     always @(posedge clock) begin
-        if (!reset) begin
-            kanata_tracer_frontend_stage(hartId, portId, stageId, uopId, flush);
+        if (!reset && uopId_valid) begin
+            kanata_tracer_frontend_stage(hartId, portId, stageId, uopId_bits, flush);
         end
     end
 
@@ -48,14 +49,15 @@ module FetchBufferTracer #(
     input logic reset,
     input logic [31:0] hartId,
     input logic [31:0] portId,
-    input logic [63:0] uopId,
+    input logic uopId_valid,
+    input logic [63:0] uopId_bits,
     input logic [VADDR_BITS_EXTENDED - 1 : 0] uopPc,
     input logic flush
 );
 
     always @(posedge block) begin
-        if (!reset) begin
-            kanata_tracer_fetch_buffer(hartId, portId, uopId, uopPc, flush);
+        if (!reset && uopId_valid) begin
+            kanata_tracer_fetch_buffer(hartId, portId, uopId_bits, uopPc, flush);
         end
     end
 
@@ -67,14 +69,16 @@ module ScalarBackendStageTracer (
     input logic [31:0] hartId,
     input logic [31:0] portId,
     input logic [2:0] stageId,
-    input logic [63:0] uopId,
+    input logic uopId_valid,
+    input logic [63:0] uopId_bits,
     input logic flush,
     input logic wbPending
 );
 
     always @(posedge clock) begin
         if (!reset) begin
-            kanata_tracer_scalar_backend_stage(hartId, portId, stageId, uopId, flush, wbPending);
+            kanata_tracer_scalar_backend_stage(hartId, portId, stageId, uopId_bits, flush,
+                                               wbPending);
         end
     end
 

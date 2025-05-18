@@ -1,37 +1,10 @@
 package shuttle.trace
 
 import chisel3._
-import chisel3.util.{HasBlackBoxResource, Valid}
+import chisel3.util.{DecoupledIO, HasBlackBoxResource, Valid}
 import freechips.rocketchip.tile.MaxHartIdBits
 import org.chipsalliance.cde.config.Parameters
 import shuttle.common.ShuttleUOP
-
-//class KanataTracer(fetchWidth: Int,
-//                   retireWidth: Int,
-//                   vaddrBitsExtended: Int)(implicit p: Parameters)
-//  extends BlackBox(Map(
-//    "FETCH_WIDTH" -> fetchWidth,
-//    "RETIRE_WIDTH" -> retireWidth,
-//    "VADDR_BITS_EXTENDED" -> vaddrBitsExtended,
-//    "HART_ID_BITS" -> p(MaxHartIdBits),
-//  ))
-//    with HasBlackBoxResource {
-//
-//  private def pipelineUopIds = Vec(retireWidth, Valid(UInt(64.W)))
-//
-//  val io = IO(new Bundle {
-//    val clock = Input(Clock())
-//    val reset = Input(Bool())
-//    val hartid = Input(UInt(p(MaxHartIdBits).W))
-//    val s0id = Input(Valid(UInt(64.W)))
-//    val s1id = Input(Valid(UInt(64.W)))
-//    val s2ids = Input(Vec(fetchWidth, Valid(UInt(64.W))))
-//    val s2pcs = Input(Vec(fetchWidth, UInt(vaddrBitsExtended.W)))
-//    val rrd, ex, mem, com, wb = Input(pipelineUopIds)
-//  })
-//
-//  addResource("/shuttle/vsrc/KanataTracer.v")
-//}
 
 class FrontendStageTracer(implicit p: Parameters)
   extends BlackBox with HasBlackBoxResource {
@@ -91,17 +64,16 @@ class ScalarBackendStageTracer(implicit p: Parameters)
 
 object KanataTracer {
   object ShuttleFrontendStage extends Enumeration {
-    val f0, f1 = Value()
+    val F0, F1, F2 = Value()
   }
 
-  sealed trait ShuttleBackendStage
+  sealed abstract class ShuttleBackendStage(val id: Int)
 
   object ShuttleBackendStage {
-    case object Rrd extends ShuttleBackendStage
-    case object Ex extends ShuttleBackendStage
-    case object Mem extends ShuttleBackendStage
-    case class Com(wbPending: Bool) extends ShuttleBackendStage
-    case object Wb extends ShuttleBackendStage
+    case object Rrd extends ShuttleBackendStage(0)
+    case object Ex extends ShuttleBackendStage(1)
+    case object Mem extends ShuttleBackendStage(2)
+    case class Com(wbPending: Bool) extends ShuttleBackendStage(3)
   }
 
   def frontendStage(stage: ShuttleFrontendStage.Value,
@@ -113,22 +85,34 @@ object KanataTracer {
                     flush: Bool)(implicit p: Parameters): Unit = {
     val m = Module(new FrontendStageTracer())
 
-    ???
+    m.io.clock := clock
+    m.io.reset := reset.asBool
+    m.io.hartId := hartId
+    m.io.portId := port
+    m.io.stageId := stage.id.U
+    m.io.uopId := uopId
+    m.io.flush := flush
   }
 
-  def fetchBuffer(deq: Vec[Decoupled[ShuttleUOP]]): Unit = {
-    for (i <- deq.indices) {
+  def fetchBuffer(clock: Clock,
+                  reset: Reset,
+                  hartId: UInt,
+                  ram: Vec[Valid[ShuttleUOP]],
+                  flush: Bool): Unit = {
+    for (i <- ram.indices) {
       val m = Module(new FetchBufferTracer())
 
-      ???
+      m.io.clock := clock
+      m.io.reset := reset
+      m.io.hartId := hartId
+      m.io.portId := i.U
+      m.io.uopId.bits := ram(i).bits.id
+      m.io.uopId.valid := ram(i).valid
+      m.io.uopPc := ram(i).bits.pc
+      m.io.flush := flush
     }
   }
 
-  /**
-   * Adds Kanata tracing for a single scalar backend pipeline stage.
-   *
-   * @param flush if `true`, the previous instruction is marked as flushed.
-   */
   def scalarBackendStage(stage: ShuttleBackendStage,
                          clock: Clock,
                          reset: Reset,
@@ -138,6 +122,17 @@ object KanataTracer {
                          flush: Bool)(implicit p: Parameters): Unit = {
     val m = Module(new ScalarBackendStageTracer())
 
-    ???
+    m.io.clock := clock
+    m.io.reset := reset
+    m.io.hartId := hartId
+    m.io.portId := port
+    m.io.stageId := stage.id.U
+    m.io.uopId.bits := uop.bits.id
+    m.io.uopId.valid := uop.valid
+    m.io.flush := flush
+    m.io.wbPending := (stage match {
+      case ShuttleBackendStage.Com(wbPending) => wbPending
+      case _ => false.asBool
+    })
   }
 }

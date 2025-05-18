@@ -156,6 +156,7 @@ class ShuttleCore(tile: ShuttleTile, edge: TLEdgeOut)(implicit p: Parameters) ex
     com_vcfg.get.valid := mem_vcfg.get.valid && !kill_mem
   }
 
+  io.imem.hartid := io.hartid
   io.imem.redirect_val := false.B
   io.imem.redirect_flush := false.B
   io.imem.flush_icache := false.B
@@ -462,6 +463,18 @@ class ShuttleCore(tile: ShuttleTile, edge: TLEdgeOut)(implicit p: Parameters) ex
 
   io.imem.redirect_flush := rrd_uops(0).valid && !rrd_stall(0) && rrd_uops(0).bits.csr_wen
 
+  for (i <- 0 until retireWidth) {
+    KanataTracer.scalarBackendStage(
+      KanataTracer.ShuttleBackendStage.Rrd,
+      clock,
+      reset,
+      io.hartid,
+      i.U,
+      rrd_uops(i),
+      flush_rrd_ex,
+    )
+  }
+
   // ex
   val fregfile = Reg(Vec(32, UInt(65.W)))
   val fsboard = Reg(Vec(32, Bool()))
@@ -636,6 +649,18 @@ class ShuttleCore(tile: ShuttleTile, edge: TLEdgeOut)(implicit p: Parameters) ex
     ex_dmem_structural_hazard ||
     ex_fp_data_hazard.reduce(_||_)
   )
+
+  for (i <- 0 until retireWidth) {
+    KanataTracer.scalarBackendStage(
+      KanataTracer.ShuttleBackendStage.Ex,
+      clock,
+      reset,
+      io.hartid,
+      i.U,
+      ex_uops_reg(i),
+      flush_rrd_ex,
+    )
+  }
 
   //mem
 
@@ -871,6 +896,18 @@ class ShuttleCore(tile: ShuttleTile, edge: TLEdgeOut)(implicit p: Parameters) ex
     }
   }
 
+  for (i <- 0 until retireWidth) {
+    KanataTracer.scalarBackendStage(
+      KanataTracer.ShuttleBackendStage.Mem,
+      clock,
+      reset,
+      io.hartid,
+      i.U,
+      mem_uops_reg(i),
+      kill_mem,
+    )
+  }
+
   // com
   fp_pipe.io.s2_kill := kill_com(0)
   val com_fp_divsqrt_ctrl = com_uops_reg(0).bits.fp_ctrl
@@ -1029,6 +1066,16 @@ class ShuttleCore(tile: ShuttleTile, edge: TLEdgeOut)(implicit p: Parameters) ex
         false.B,
         rd + Mux(ctrl.wfd, 32.U, 0.U))
       io.trace.insns(i) := DebugROB.popTrace(clock, reset, io.hartid)
+
+      KanataTracer.scalarBackendStage(
+        KanataTracer.ShuttleBackendStage.Com(should_wb),
+        clock,
+        reset,
+        io.hartid,
+        i.U,
+        com_uops(i),
+        kill_com(i),
+      )
     }
   }
 
@@ -1358,7 +1405,6 @@ class ShuttleCore(tile: ShuttleTile, edge: TLEdgeOut)(implicit p: Parameters) ex
     DebugROB.pushWb(clock, reset, io.hartid, fp_pipe.io.out.valid, fp_pipe.io.out_rd + 32.U, fp_ieee_wdata)
 
 
-
   when (reset.asBool) {
     for (i <- 0 until retireWidth) {
       ex_uops_reg(i).valid := false.B
@@ -1371,27 +1417,4 @@ class ShuttleCore(tile: ShuttleTile, edge: TLEdgeOut)(implicit p: Parameters) ex
       com_vcfg.get.valid := false.B
     }
   }
-
-  val kanata = Module(
-    new KanataTracer(fetchWidth, retireWidth, vaddrBitsExtended))
-  kanata.io.clock := clock
-  kanata.io.reset := reset
-  kanata.io.hartid := io.hartid
-  kanata.io.s0id := io.imem.s0_id
-  kanata.io.s1id := io.imem.s1_id
-  kanata.io.s2ids := io.imem.s2_ids
-  kanata.io.s2pcs := io.imem.s2_pcs
-
-//  private def connectStageToTracer(dst: Vec[Valid[UInt]], src: Vec[Valid[ShuttleUOP]]): Unit = {
-//    for ((d, s) <- dst.zip(src)) {
-//      d.valid := s.valid
-//      d.bits := s.bits.id
-//    }
-//  }
-//
-//  connectStageToTracer(kanata.io.rrd, rrd_uops)
-//  connectStageToTracer(kanata.io.ex, ex_uops_reg)
-//  connectStageToTracer(kanata.io.mem, mem_uops_reg)
-//  connectStageToTracer(kanata.io.com, com_uops_reg)
-//  connectStageToTracer(kanata.io.wb, wb_uops_reg)
 }
