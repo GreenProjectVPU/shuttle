@@ -1382,16 +1382,16 @@ class ShuttleCore(tile: ShuttleTile, edge: TLEdgeOut)(implicit p: Parameters) ex
   kanata.io.s2ids := io.imem.s2_ids
   kanata.io.s2pcs := io.imem.s2_pcs
 
-  private def connectStageToTracer(dst: Vec[Valid[UInt]], src: Vec[Valid[ShuttleUOP]]): Unit = {
-    for ((d, s) <- dst.zip(src)) {
-      d.valid := s.valid
-      d.bits := s.bits.pc
-    }
-  }
-
-  connectStageToTracer(kanata.io.rrd, rrd_uops)
-  connectStageToTracer(kanata.io.ex, ex_uops_reg)
-  connectStageToTracer(kanata.io.mem, mem_uops_reg)
-  connectStageToTracer(kanata.io.com, com_uops_reg)
-  connectStageToTracer(kanata.io.wb, wb_uops_reg)
+//  private def connectStageToTracer(dst: Vec[Valid[UInt]], src: Vec[Valid[ShuttleUOP]]): Unit = {
+//    for ((d, s) <- dst.zip(src)) {
+//      d.valid := s.valid
+//      d.bits := s.bits.id
+//    }
+//  }
+//
+//  connectStageToTracer(kanata.io.rrd, rrd_uops)
+//  connectStageToTracer(kanata.io.ex, ex_uops_reg)
+//  connectStageToTracer(kanata.io.mem, mem_uops_reg)
+//  connectStageToTracer(kanata.io.com, com_uops_reg)
+//  connectStageToTracer(kanata.io.wb, wb_uops_reg)
 }

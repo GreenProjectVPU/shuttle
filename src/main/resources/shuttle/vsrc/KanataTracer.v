@@ -203,32 +203,9 @@ module KanataTracer #(
     logic [63:0] wb_bits[RETIRE_WIDTH];
     assign wb_bits = '{wb_0_bits, wb_1_bits};
 
+    string comment;
+
     //
-
-    logic s0id_valid_reg;
-    logic [63:0] s0id_bits_reg;
-
-    logic s1id_valid_reg;
-    logic [63:0] s1id_bits_reg;
-
-    logic s2ids_valid_reg[FETCH_WIDTH];
-    logic [63:0] s2ids_bits_reg[FETCH_WIDTH];
-    logic [VADDR_BITS_EXTENDED-1:0] s2pcs_reg[FETCH_WIDTH];
-
-    logic rrd_valid_reg[RETIRE_WIDTH];
-    logic [63:0] rrd_bits_reg[RETIRE_WIDTH];
-
-    logic ex_valid_reg[RETIRE_WIDTH];
-    logic [63:0] ex_bits_reg[RETIRE_WIDTH];
-
-    logic mem_valid_reg[RETIRE_WIDTH];
-    logic [63:0] mem_bits_reg[RETIRE_WIDTH];
-
-    logic com_valid_reg[RETIRE_WIDTH];
-    logic [63:0] com_bits_reg[RETIRE_WIDTH];
-
-    logic wb_valid_reg[RETIRE_WIDTH];
-    logic [63:0] wb_bits_reg[RETIRE_WIDTH];
 
     KanataLogWriter log;
 
@@ -242,94 +219,71 @@ module KanataTracer #(
     end
 
     always @(posedge clock) begin
-        if (reset) begin
-            s0id_valid_reg <= 1'b0;
-            s0id_bits_reg  <= 64'b0;
-
-            s1id_valid_reg <= 1'b0;
-            s1id_bits_reg  <= 64'b0;
-
-            for (int i = 0; i <= FETCH_WIDTH; ++i) begin
-                s2ids_valid_reg[i] <= 1'b0;
-                s2ids_bits_reg[i] <= 64'b0;
-                s2pcs_reg[i] <= 'd0;
-            end
-
-            for (int i = 0; i <= RETIRE_WIDTH; ++i) begin
-                rrd_valid_reg[i] <= 1'b0;
-                rrd_bits_reg[i]  <= 64'b0;
-                ex_valid_reg[i]  <= 1'b0;
-                ex_bits_reg[i]   <= 64'b0;
-                mem_valid_reg[i] <= 1'b0;
-                mem_bits_reg[i]  <= 64'b0;
-                com_valid_reg[i] <= 1'b0;
-                com_bits_reg[i]  <= 64'b0;
-                wb_valid_reg[i]  <= 1'b0;
-                wb_bits_reg[i]   <= 64'b0;
-            end
-        end else begin
+        if (!reset) begin
             // Stage F0.
-            if (s0id_valid_reg) begin
+            if (s0id_valid) begin
                 // Register new instructions.
                 for (int i = 0; i < FETCH_WIDTH; ++i) begin
-                    log.write_cmd_i(s0id_bits_reg + 64'(i), longint'(hartid));
+                    log.write_cmd_i(s0id_bits + 64'(i), longint'(hartid));
                 end
 
                 // Enter stage F0.
                 for (int i = 0; i < FETCH_WIDTH; ++i) begin
-                    log.write_cmd_s(s0id_bits_reg + 64'(i), "F0");
+                    log.write_cmd_s(s0id_bits + 64'(i), "F0");
                 end
             end
 
             // Stage F1.
-            if (s1id_valid_reg) begin
+            if (s1id_valid) begin
                 for (int i = 0; i < FETCH_WIDTH; ++i) begin
-                    log.write_cmd_s(s1id_bits_reg + 64'(i), "F1");
+                    log.write_cmd_s(s1id_bits + 64'(i), "F1");
                 end
             end
 
             // Stage F2.
             for (int i = 0; i < FETCH_WIDTH; ++i) begin
-                if (s2ids_valid_reg[i]) begin
-                    log.write_cmd_s(s2ids_bits_reg[i], "F2");
+                if (s2ids_valid[i]) begin
+                    log.write_cmd_s(s2ids_bits[i], "F2");
 
                     // TODO: print the disassembled instruction.
-                    log.write_cmd_l(s2ids_bits_reg[i], 0, {"PC: ", string'(s2pcs_reg[i])});
+                    comment = "";
+                    $swrite(comment, "PC: %0x", s2pcs[i]);
+                    log.write_cmd_l(s2ids_bits[i], 0, comment);
                 end
             end
 
             // Stage RRD.
             for (int i = 0; i < RETIRE_WIDTH; ++i) begin
-                if (rrd_valid_reg[i]) begin
-                    log.write_cmd_s(rrd_bits_reg[i], "RRD");
+                if (rrd_valid[i]) begin
+                    log.write_cmd_s(rrd_bits[i], "RRD");
                 end
             end
 
             // Stage EX.
             for (int i = 0; i < RETIRE_WIDTH; ++i) begin
-                if (ex_valid_reg[i]) begin
-                    log.write_cmd_s(ex_bits_reg[i], "EX");
+                if (ex_valid[i]) begin
+                    log.write_cmd_s(ex_bits[i], "EX");
                 end
             end
 
             // Stage MEM.
             for (int i = 0; i < RETIRE_WIDTH; ++i) begin
-                if (mem_valid_reg[i]) begin
-                    log.write_cmd_s(mem_bits_reg[i], "MEM");
+                if (mem_valid[i]) begin
+                    log.write_cmd_s(mem_bits[i], "MEM");
                 end
             end
 
             // Stage COM.
             for (int i = 0; i < RETIRE_WIDTH; ++i) begin
-                if (com_valid_reg[i]) begin
-                    log.write_cmd_s(com_bits_reg[i], "COM");
+                if (com_valid[i]) begin
+                    log.write_cmd_s(com_bits[i], "COM");
                 end
             end
 
             // Stage WB.
             for (int i = 0; i < RETIRE_WIDTH; ++i) begin
-                if (wb_valid_reg[i]) begin
-                    log.write_cmd_s(wb_bits_reg[i], "WB");
+                if (wb_valid[i]) begin
+                    log.write_cmd_s(wb_bits[i], "WB");
                 end
             end
 
@@ -338,34 +292,9 @@ module KanataTracer #(
 
             // End the WB stage.
             for (int i = 0; i < RETIRE_WIDTH; ++i) begin
-                if (wb_valid_reg[i]) begin
-                    log.write_cmd_r(wb_bits_reg[i], wb_bits_reg[i], 0);
+                if (wb_valid[i]) begin
+                    log.write_cmd_r(wb_bits[i], wb_bits[i], 0);
                 end
-            end
-
-            s0id_valid_reg <= s0id_valid;
-            s0id_bits_reg  <= s0id_bits;
-
-            s1id_valid_reg <= s1id_valid;
-            s1id_bits_reg  <= s1id_bits;
-
-            for (int i = 0; i <= FETCH_WIDTH; ++i) begin
-                s2ids_valid_reg[i] <= s2ids_valid[i];
-                s2ids_bits_reg[i] <= s2ids_bits[i];
-                s2pcs_reg[i] <= s2pcs[i];
-            end
-
-            for (int i = 0; i <= RETIRE_WIDTH; ++i) begin
-                rrd_valid_reg[i] <= rrd_valid[i];
-                rrd_bits_reg[i]  <= rrd_bits[i];
-                ex_valid_reg[i]  <= ex_valid[i];
-                ex_bits_reg[i]   <= ex_bits[i];
-                mem_valid_reg[i] <= mem_valid[i];
-                mem_bits_reg[i]  <= mem_bits[i];
-                com_valid_reg[i] <= com_valid[i];
-                com_bits_reg[i]  <= com_bits[i];
-                wb_valid_reg[i]  <= wb_valid[i];
-                wb_bits_reg[i]   <= wb_bits[i];
             end
         end
     end
