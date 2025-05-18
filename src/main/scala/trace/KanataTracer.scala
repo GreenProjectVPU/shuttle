@@ -1,7 +1,7 @@
 package shuttle.trace
 
 import chisel3._
-import chisel3.util.{DecoupledIO, HasBlackBoxResource, Valid}
+import chisel3.util.{HasBlackBoxResource, Valid}
 import freechips.rocketchip.tile.MaxHartIdBits
 import org.chipsalliance.cde.config.Parameters
 import shuttle.common.ShuttleUOP
@@ -71,8 +71,11 @@ object KanataTracer {
 
   object ShuttleBackendStage {
     case object Rrd extends ShuttleBackendStage(0)
+
     case object Ex extends ShuttleBackendStage(1)
+
     case object Mem extends ShuttleBackendStage(2)
+
     case class Com(wbPending: Bool) extends ShuttleBackendStage(3)
   }
 
@@ -83,7 +86,7 @@ object KanataTracer {
                     port: UInt,
                     uopId: Valid[UInt],
                     flush: Bool)(implicit p: Parameters): Unit = {
-    val m = Module(new FrontendStageTracer())
+    val m = Module(new FrontendStageTracer)
 
     m.io.clock := clock
     m.io.reset := reset.asBool
@@ -100,7 +103,7 @@ object KanataTracer {
                   ram: Vec[Valid[ShuttleUOP]],
                   flush: Bool): Unit = {
     for (i <- ram.indices) {
-      val m = Module(new FetchBufferTracer())
+      val m = Module(new FetchBufferTracer)
 
       m.io.clock := clock
       m.io.reset := reset
@@ -120,7 +123,7 @@ object KanataTracer {
                          port: UInt,
                          uop: Valid[ShuttleUOP],
                          flush: Bool)(implicit p: Parameters): Unit = {
-    val m = Module(new ScalarBackendStageTracer())
+    val m = Module(new ScalarBackendStageTracer)
 
     m.io.clock := clock
     m.io.reset := reset

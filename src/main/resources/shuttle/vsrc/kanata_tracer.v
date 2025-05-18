@@ -1,11 +1,5 @@
-import "DPI-C" function void kanata_tracer_params(
-    input int unsigned hartId,
-    input int unsigned fetchWidth,
-    input int unsigned retireWidth,
-    input int unsigned fetchBufferSize
-);
-
 import "DPI-C" function void kanata_tracer_frontend_stage(
+    input longint unsigned cycle,
     input int unsigned hart_id,
     input int unsigned port_id,
     input int unsigned stage_id,
@@ -14,6 +8,7 @@ import "DPI-C" function void kanata_tracer_frontend_stage(
 );
 
 import "DPI-C" function void kanata_tracer_fetch_buffer(
+    input longint unsigned cycle,
     input int unsigned hart_id,
     input int unsigned port_id,
     input longint unsigned uop_id,
@@ -22,6 +17,7 @@ import "DPI-C" function void kanata_tracer_fetch_buffer(
 );
 
 import "DPI-C" function void kanata_tracer_scalar_backend_stage(
+    input longint unsigned cycle,
     input int unsigned hart_id,
     input int unsigned port_id,
     input int unsigned stage_id,
@@ -30,15 +26,18 @@ import "DPI-C" function void kanata_tracer_scalar_backend_stage(
     input bit wb_pending
 );
 
-module KanataTracerParams (
-    input int unsigned hartId,
-    input int unsigned fetchWidth,
-    input int unsigned retireWidth,
-    input int unsigned fetchBufferSize
+module KanataTracerCycleCounter (
+    input logic clock,
+    input logic reset,
+    output longint unsigned cycle
 );
 
-    initial begin
-        kanata_tracer_params(hartId, fetchWidth, retireWidth, fetchBufferSize);
+    always @(posedge clock) begin
+        if (reset) begin
+            cycle <= 'd0;
+        end else begin
+            cycle <= cycle + 1;
+        end
     end
 
 endmodule
@@ -54,9 +53,16 @@ module FrontendStageTracer (
     input logic flush
 );
 
+    longint unsigned cycle;
+    KanataTracerCycleCounter ctr (
+        .clock(clock),
+        .reset(reset),
+        .cycle(cycle)
+    );
+
     always @(posedge clock) begin
         if (!reset && uopId_valid) begin
-            kanata_tracer_frontend_stage(hartId, portId, stageId, uopId_bits, flush);
+            kanata_tracer_frontend_stage(cycle, hartId, portId, stageId, uopId_bits, flush);
         end
     end
 
@@ -75,9 +81,16 @@ module FetchBufferTracer #(
     input logic flush
 );
 
+    longint unsigned cycle;
+    KanataTracerCycleCounter ctr (
+        .clock(clock),
+        .reset(reset),
+        .cycle(cycle)
+    );
+
     always @(posedge block) begin
         if (!reset && uopId_valid) begin
-            kanata_tracer_fetch_buffer(hartId, portId, uopId_bits, uopPc, flush);
+            kanata_tracer_fetch_buffer(cycle, hartId, portId, uopId_bits, uopPc, flush);
         end
     end
 
@@ -95,9 +108,16 @@ module ScalarBackendStageTracer (
     input logic wbPending
 );
 
+    longint unsigned cycle;
+    KanataTracerCycleCounter ctr (
+        .clock(clock),
+        .reset(reset),
+        .cycle(cycle)
+    );
+
     always @(posedge clock) begin
         if (!reset) begin
-            kanata_tracer_scalar_backend_stage(hartId, portId, stageId, uopId_bits, flush,
+            kanata_tracer_scalar_backend_stage(cycle, hartId, portId, stageId, uopId_bits, flush,
                                                wbPending);
         end
     end
