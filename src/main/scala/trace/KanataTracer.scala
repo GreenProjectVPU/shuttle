@@ -55,7 +55,6 @@ class ScalarBackendStageTracer(implicit p: Parameters)
     val stageId = Input(UInt(3.W))
     val uopId = Input(Valid(UInt(64.W)))
     val flush = Input(Bool())
-    val wbPending = Input(Bool())
   })
 
   addResource("/shuttle/vsrc/kanata_tracer.v")
@@ -76,7 +75,7 @@ object KanataTracer {
 
     case object Mem extends ShuttleBackendStage(2)
 
-    case class Com(wbPending: Bool) extends ShuttleBackendStage(3)
+    case object Com extends ShuttleBackendStage(3)
   }
 
   def frontendStage(stage: ShuttleFrontendStage.Value,
@@ -133,9 +132,5 @@ object KanataTracer {
     m.io.uopId.bits := uop.bits.id
     m.io.uopId.valid := uop.valid
     m.io.flush := flush
-    m.io.wbPending := (stage match {
-      case ShuttleBackendStage.Com(wbPending) => wbPending
-      case _ => false.asBool
-    })
   }
 }

@@ -22,8 +22,7 @@ import "DPI-C" function void kanata_tracer_scalar_backend_stage(
     input int unsigned port_id,
     input int unsigned stage_id,
     input longint unsigned uop_id,
-    input bit flush,
-    input bit wb_pending
+    input bit flush
 );
 
 module KanataTracerCycleCounter (
@@ -104,8 +103,7 @@ module ScalarBackendStageTracer (
     input logic [2:0] stageId,
     input logic uopId_valid,
     input logic [63:0] uopId_bits,
-    input logic flush,
-    input logic wbPending
+    input logic flush
 );
 
     longint unsigned cycle;
@@ -117,8 +115,7 @@ module ScalarBackendStageTracer (
 
     always @(posedge clock) begin
         if (!reset) begin
-            kanata_tracer_scalar_backend_stage(cycle, hartId, portId, stageId, uopId_bits, flush,
-                                               wbPending);
+            kanata_tracer_scalar_backend_stage(cycle, hartId, portId, stageId, uopId_bits, flush);
         end
     end
 

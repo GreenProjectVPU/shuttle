@@ -1050,6 +1050,16 @@ class ShuttleCore(tile: ShuttleTile, edge: TLEdgeOut)(implicit p: Parameters) ex
   }
 
   val useDebugROB = shuttleParams.debugROB
+
+  private def shouldWb(i: Int): Bool = {
+    val ctrl = com_uops(i).bits.ctrl
+    val rd = com_uops(i).bits.rd
+
+    !io.vector.map(_.com.retire_late).getOrElse(false.B) &&
+      (ctrl.wfd || (ctrl.wxd && rd =/= 0.U)) &&
+      !csr.io.trace(i).exception
+  }
+
   if (useDebugROB) {
     val trace = WireInit(csr.io.trace)
     for (i <- 0 until retireWidth) {
@@ -1066,17 +1076,19 @@ class ShuttleCore(tile: ShuttleTile, edge: TLEdgeOut)(implicit p: Parameters) ex
         false.B,
         rd + Mux(ctrl.wfd, 32.U, 0.U))
       io.trace.insns(i) := DebugROB.popTrace(clock, reset, io.hartid)
-
-      KanataTracer.scalarBackendStage(
-        KanataTracer.ShuttleBackendStage.Com(should_wb),
-        clock,
-        reset,
-        io.hartid,
-        i.U,
-        com_uops(i),
-        kill_com(i),
-      )
     }
+  }
+
+  for (i <- 0 until retireWidth) {
+    KanataTracer.scalarBackendStage(
+      KanataTracer.ShuttleBackendStage.Com,
+      clock,
+      reset,
+      io.hartid,
+      i.U,
+      com_uops(i),
+      kill_com(i),
+    )
   }
 
   csr.io.rw.addr := Mux(com_uops_reg(0).valid, com_uops_reg(0).bits.inst(31,20), 0.U)

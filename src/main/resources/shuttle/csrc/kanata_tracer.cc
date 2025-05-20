@@ -1,5 +1,18 @@
+#include <algorithm>
+#include <cassert>
 #include <cstdint>
+#include <cstdlib>
+#include <deque>
+#include <filesystem>
+#include <fstream>
+#include <map>
+#include <optional>
+#include <queue>
+#include <string_view>
 #include <unordered_map>
+#include <utility>
+#include <variant>
+#include <vector>
 
 namespace {
 
@@ -47,7 +60,6 @@ public:
         uint32_t port_id,
         BackendStage stage,
         uint64_t uop_id,
-        bool wb_pending,
         bool flush
     ) noexcept {
         // TODO
@@ -64,12 +76,225 @@ public:
     }
 
 private:
+    enum class Stage: uint8_t {
+        F0,
+        F1,
+        F2,
+        F3,
+        Rrd,
+        Ex,
+        Mem,
+        Com,
+    };
+
+    struct Event {
+        static constexpr struct Retire {} retire;
+        static constexpr struct Flush {} flush;
+
+        using Kind = std::variant<Stage, Retire, Flush>;
+
+        uint64_t cycle;
+        Kind kind;
+    };
+
+    struct Instr {
+        Stage stage;
+
+        // an instruction id assigned at the F0 stage.
+        uint64_t id;
+
+        // a serial instruction id in the log.
+        uint64_t sid;
+
+        // a retirement id.
+        uint64_t rid = 0;
+
+        std::optional<uint64_t> pc;
+        bool finished = false;
+        bool started_printing = false;
+        std::optional<uint64_t> retire_id;
+        std::deque<Event> events;
+
+        bool can_print() const noexcept {
+            return finished || stage >= Stage::F3;
+        }
+    };
+
+    uint64_t first_unprinted_cycle(const Instr &instr) const noexcept {
+        if (!instr.events.empty()) {
+            return instr.events.front().cycle;
+        }
+
+        return current_cycle_;
+    }
+
+    uint64_t find_cutoff() const noexcept {
+        uint64_t cutoff = current_cycle_;
+
+        for (const auto &[_, instr] : instrs_in_flight_) {
+            if (!instr.finished) {
+                // the instruction's event queue may yet grow.
+                cutoff = std::min(cutoff, first_unprinted_cycle(instr));
+            }
+        }
+
+        return cutoff;
+    }
+
+    template<class... Args>
+    void print_cmd(std::string_view cmd, Args &&...args) const {
+        output << cmd;
+        ((output << '\t' << args), ...);
+        output << '\n';
+    }
+
+    void print_cmd_i(const Instr &instr) const {
+        print_cmd("I", instr.sid, instr.id, hart_id_);
+    }
+
+    void print_cmd_l(const Instr &instr, bool hover_only, std::string_view msg) const {
+        print_cmd("L", instr.sid, int(hover_only), msg);
+    }
+
+    static std::string_view stage_name(Stage stage) noexcept {
+        switch (stage) {
+        case Stage::F0:
+            return "F0";
+
+        case Stage::F1:
+            return "F1";
+
+        case Stage::F2:
+            return "F2";
+
+        case Stage::F3:
+            return "F3";
+
+        case Stage::Rrd:
+            return "RRD";
+
+        case Stage::Ex:
+            return "EX";
+
+        case Stage::Mem:
+            return "MEM";
+
+        case Stage::Com:
+            return "COM";
+        }
+    }
+
+    void print_cmd_c(uint64_t n) const {
+        print_cmd("C", n);
+    }
+
+    void set_print_cycle(uint64_t to) {
+        assert(to >= last_printed_cycle_);
+
+        if (to > 0) {
+            print_cmd_c(to - last_printed_cycle_);
+        }
+
+        last_printed_cycle_ = to;
+    }
+
+    void print_cmd_s(const Instr &instr, Stage stage) const {
+        print_cmd("S", instr.sid, 0, stage_name(stage));
+    }
+
+    void print_cmd_r(const Instr &instr, bool flush) const {
+        print_cmd("R", instr.sid, instr.rid, int(flush));
+    }
+
+    void print_event(Stage stage, const Event &event, const Instr &instr) const {
+        print_cmd_s(instr, stage);
+    }
+
+    void print_event(Event::Retire, const Event &event, const Instr &instr) const {
+        print_cmd_r(instr, false);
+    }
+
+    void print_event(Event::Flush, const Event &event, const Instr &instr) const {
+        print_cmd_r(instr, true);
+    }
+
+    void flush() {
+        using Elem = std::pair<Event, Instr &>;
+
+        uint64_t cutoff = find_cutoff();
+        auto cmp = [&](const Elem &lhs, const Elem &rhs) {
+            return lhs.first.cycle > rhs.first.cycle;
+        };
+        std::priority_queue<Elem, std::vector<Elem>, decltype(cmp)> events(cmp);
+
+        std::vector<uint64_t> finished_instrs;
+
+        for (auto &[id, instr] : instrs_in_flight_) {
+            if (first_unprinted_cycle(instr) > cutoff) {
+                break;
+            }
+
+            if (!instr.can_print()) {
+                continue;
+            }
+
+            while (!instr.events.empty()) {
+                auto &event = instr.events.front();
+
+                if (event.cycle > cutoff) {
+                    break;
+                }
+
+                events.emplace(event, instr);
+                instr.events.pop_front();
+            }
+
+            if (instr.events.empty() && instr.finished) {
+                finished_instrs.push_back(id);
+            }
+        }
+
+        for (; !events.empty(); events.pop()) {
+            const auto &event = events.top().first;
+            auto &instr = events.top().second;
+            set_print_cycle(event.cycle);
+
+            if (!instr.started_printing) {
+                instr.started_printing = true;
+                print_cmd_i(instr);
+            }
+
+            std::visit([&](auto &&kind) { print_event(kind, event, instr); }, event.kind);
+        }
+
+        for (auto id : finished_instrs) {
+            instrs_in_flight_.erase(id);
+        }
+    }
+
     uint32_t hart_id_;
+    uint64_t current_cycle_ = 0;
+    uint64_t last_printed_cycle_ = 0;
+    uint64_t next_sid_ = 0;
+
+    // instructions not yet written to the log. instructions with lower ids start earlier.
+    std::map<uint64_t, Instr> instrs_in_flight_;
 
     static std::unordered_map<uint32_t, Tracer> tracers;
+    static std::ofstream output;
 };
 
+std::filesystem::path kanata_log_path() {
+    // NOLINTNEXTLINE(concurrency-mt-unsafe)
+    if (const auto *path = getenv("KANATA_LOG_PATH")) {
+        return path;
+    }
+
+    return "kanata.log";
+}
+
 std::unordered_map<uint32_t, Tracer> Tracer::tracers;
+std::ofstream Tracer::output(kanata_log_path());
 
 } // namespace
 
@@ -103,10 +328,9 @@ extern "C" void kanata_tracer_scalar_backend_stage(
     uint32_t port_id,
     uint32_t stage_id,
     uint64_t uop_id,
-    bool flush,
-    bool wb_pending
+    bool flush
 ) {
     Tracer::get_for(hart_id).backend(
-        cycle, port_id, static_cast<Tracer::BackendStage>(stage_id), uop_id, wb_pending, flush
+        cycle, port_id, static_cast<Tracer::BackendStage>(stage_id), uop_id, flush
     );
 }
