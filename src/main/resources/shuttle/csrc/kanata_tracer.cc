@@ -5,9 +5,11 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <ios>
 #include <map>
 #include <optional>
 #include <queue>
+#include <sstream>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
@@ -42,7 +44,35 @@ public:
         uint64_t uop_id,
         bool flush
     ) noexcept {
-        // TODO
+        auto &instr = instrs_in_flight_[uop_id];
+
+        if (stage == FrontendStage::F0) {
+            instr = Instr(Stage::F0, uop_id);
+        }
+
+        switch (stage) {
+        case FrontendStage::F0:
+            instr.stage = Stage::F0;
+            break;
+
+        case FrontendStage::F1:
+            instr.stage = Stage::F1;
+            break;
+
+        case FrontendStage::F2:
+            instr.stage = Stage::F2;
+            instr.f3_deadline = cycle + 1;
+            break;
+        }
+
+        instr.events.emplace_back(cycle, instr.stage);
+
+        if (flush) {
+            instr.events.emplace_back(cycle + 1, Event::flush);
+            instr.finished = true;
+        }
+
+        update(cycle);
     }
 
     void fetch_buffer(
@@ -52,7 +82,18 @@ public:
         uint64_t uop_pc,
         bool flush
     ) noexcept {
-        // TODO
+        auto &instr = instrs_in_flight_[uop_id];
+
+        instr.stage = Stage::F3;
+        instr.pc = uop_pc;
+        instr.events.emplace_back(cycle, instr.stage);
+
+        if (flush) {
+            instr.events.emplace_back(cycle + 1, Event::flush);
+            instr.finished = true;
+        }
+
+        update(cycle);
     }
 
     void backend(
@@ -62,7 +103,39 @@ public:
         uint64_t uop_id,
         bool flush
     ) noexcept {
-        // TODO
+        auto &instr = instrs_in_flight_[uop_id];
+
+        switch (stage) {
+        case BackendStage::Rrd:
+            instr.stage = Stage::Rrd;
+            break;
+
+        case BackendStage::Ex:
+            instr.stage = Stage::Ex;
+            break;
+
+        case BackendStage::Mem:
+            instr.stage = Stage::Mem;
+            break;
+
+        case BackendStage::Com:
+            instr.stage = Stage::Com;
+            break;
+        }
+
+        instr.events.emplace_back(cycle, instr.stage);
+
+        if (flush) {
+            instr.events.emplace_back(cycle + 1, Event::flush);
+            instr.finished = true;
+        } else if (instr.stage == Stage::Com) {
+            instr.events.emplace_back(cycle + 1, Event::retire);
+            // TODO: Shuttle may have its own rid?
+            instr.rid = next_rid_++;
+            instr.finished = true;
+        }
+
+        update(cycle);
     }
 
     static Tracer &get_for(uint32_t hart_id) noexcept {
@@ -76,7 +149,7 @@ public:
     }
 
 private:
-    enum class Stage: uint8_t {
+    enum class Stage : uint8_t {
         F0,
         F1,
         F2,
@@ -85,19 +158,26 @@ private:
         Ex,
         Mem,
         Com,
+        // TODO: WB. there are some weird shenanigans going on with that.
     };
 
     struct Event {
+        // clang-format off: looks prettier as one-liner.
         static constexpr struct Retire {} retire;
         static constexpr struct Flush {} flush;
+        // clang-format on
 
         using Kind = std::variant<Stage, Retire, Flush>;
+
+        Event(uint64_t cycle, Kind kind) : cycle(cycle), kind(kind) {}
 
         uint64_t cycle;
         Kind kind;
     };
 
     struct Instr {
+        Instr(Stage stage, uint64_t id) : stage(stage), id(id) {}
+
         Stage stage;
 
         // an instruction id assigned at the F0 stage.
@@ -109,10 +189,13 @@ private:
         // a retirement id.
         uint64_t rid = 0;
 
+        // at Stage::F2, this is the cycle number after which the instruction is presumed to have
+        // not been added to the fetch buffer.
+        uint64_t f3_deadline;
+
         std::optional<uint64_t> pc;
         bool finished = false;
         bool started_printing = false;
-        std::optional<uint64_t> retire_id;
         std::deque<Event> events;
 
         bool can_print() const noexcept {
@@ -126,6 +209,10 @@ private:
         }
 
         return current_cycle_;
+    }
+
+    bool missed_fetch_buffer(const Instr &instr) const noexcept {
+        return !instr.finished && instr.stage == Stage::F2 && current_cycle_ > instr.f3_deadline;
     }
 
     uint64_t find_cutoff() const noexcept {
@@ -218,7 +305,37 @@ private:
         print_cmd_r(instr, true);
     }
 
-    void flush() {
+    void update(uint64_t cycle) {
+        assert(cycle >= current_cycle_);
+        bool progressed = cycle > current_cycle_;
+        current_cycle_ = cycle;
+
+        if (progressed) {
+            // remove instructions that didn't make it to the fetch buffer.
+            for (auto it = instrs_in_flight_.begin(); it != instrs_in_flight_.end();) {
+                if (missed_fetch_buffer(it->second)) {
+                    it = instrs_in_flight_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+
+        print_instrs();
+    }
+
+    void print_cmd_info(const Instr &instr) const {
+        if (!instr.pc) {
+            return;
+        }
+
+        std::ostringstream msg;
+        // TODO: show disasm.
+        msg << "pc = " << std::hex << *instr.pc;
+        print_cmd_l(instr, false, std::move(msg).str());
+    }
+
+    void print_instrs() {
         using Elem = std::pair<Event, Instr &>;
 
         uint64_t cutoff = find_cutoff();
@@ -262,6 +379,7 @@ private:
             if (!instr.started_printing) {
                 instr.started_printing = true;
                 print_cmd_i(instr);
+                print_cmd_info(instr);
             }
 
             std::visit([&](auto &&kind) { print_event(kind, event, instr); }, event.kind);
@@ -276,6 +394,7 @@ private:
     uint64_t current_cycle_ = 0;
     uint64_t last_printed_cycle_ = 0;
     uint64_t next_sid_ = 0;
+    uint64_t next_rid_ = 0;
 
     // instructions not yet written to the log. instructions with lower ids start earlier.
     std::map<uint64_t, Instr> instrs_in_flight_;
