@@ -63,7 +63,7 @@ class ScalarBackendStageTracer(implicit p: Parameters)
 
 object KanataTracer {
   object ShuttleFrontendStage extends Enumeration {
-    val F0, F1, F2 = Value()
+    val F0, F1, F2 = Value
   }
 
   sealed abstract class ShuttleBackendStage(val id: Int)
@@ -96,13 +96,14 @@ object KanataTracer {
     m.io.flush := flush
   }
 
-  def fetchBuffer(clock: Clock,
+  def fetchBuffer(vaddrBitsExtended: Int,
+                  clock: Clock,
                   reset: Reset,
                   hartId: UInt,
                   ram: Vec[Valid[ShuttleUOP]],
-                  flush: Bool): Unit = {
+                  flush: Bool)(implicit p: Parameters): Unit = {
     for (i <- ram.indices) {
-      val m = Module(new FetchBufferTracer)
+      val m = Module(new FetchBufferTracer(vaddrBitsExtended))
 
       m.io.clock := clock
       m.io.reset := reset

@@ -128,6 +128,7 @@ class ShuttleFetchBuffer(implicit p: Parameters) extends CoreModule
   }
 
   KanataTracer.fetchBuffer(
+    vaddrBitsExtended,
     clock,
     reset,
     io.hartid,

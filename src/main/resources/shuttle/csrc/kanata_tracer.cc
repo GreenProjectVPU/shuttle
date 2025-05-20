@@ -163,8 +163,8 @@ private:
 
     struct Event {
         // clang-format off: looks prettier as one-liner.
-        static constexpr struct Retire {} retire;
-        static constexpr struct Flush {} flush;
+        static constexpr struct Retire {} retire {};
+        static constexpr struct Flush {} flush {};
         // clang-format on
 
         using Kind = std::variant<Stage, Retire, Flush>;
@@ -176,6 +176,7 @@ private:
     };
 
     struct Instr {
+        Instr() = default;
         Instr(Stage stage, uint64_t id) : stage(stage), id(id) {}
 
         Stage stage;
@@ -269,6 +270,8 @@ private:
         case Stage::Com:
             return "COM";
         }
+
+        return "<idk>";
     }
 
     void print_cmd_c(uint64_t n) const {

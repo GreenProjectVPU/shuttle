@@ -132,7 +132,7 @@ class ShuttleFrontendModule(outer: ShuttleFrontend) extends LazyModuleImp(outer)
   icache.io.req.bits := s0_vpc
 
   for (i <- 0 until fetchWidth) {
-    val uopId = Valid(UInt(64.W))
+    val uopId = Wire(Valid(UInt(64.W)))
     uopId.valid := s0_valid
     uopId.bits := s0_id + i.U
 
@@ -159,7 +159,7 @@ class ShuttleFrontendModule(outer: ShuttleFrontend) extends LazyModuleImp(outer)
   val f1_clear     = WireInit(false.B)
 
   for (i <- 0 until fetchWidth) {
-    val uopId = Valid(UInt(64.W))
+    val uopId = Wire(Valid(UInt(64.W)))
     uopId.valid := s1_valid
     uopId.bits := s1_id + i.U
 
@@ -233,7 +233,7 @@ class ShuttleFrontendModule(outer: ShuttleFrontend) extends LazyModuleImp(outer)
   val f3_ready = Wire(Bool())
 
   for (i <- 0 until fetchWidth) {
-    val uopId = Valid(UInt(64.W))
+    val uopId = Wire(Valid(UInt(64.W)))
     uopId.valid := s1_valid
     uopId.bits := s1_id + i.U
 

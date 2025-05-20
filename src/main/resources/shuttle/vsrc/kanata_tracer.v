@@ -87,7 +87,7 @@ module FetchBufferTracer #(
         .cycle(cycle)
     );
 
-    always @(posedge block) begin
+    always @(posedge clock) begin
         if (!reset && uopId_valid) begin
             kanata_tracer_fetch_buffer(cycle, hartId, portId, uopId_bits, uopPc, flush);
         end
