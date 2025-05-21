@@ -234,8 +234,8 @@ class ShuttleFrontendModule(outer: ShuttleFrontend) extends LazyModuleImp(outer)
 
   for (i <- 0 until fetchWidth) {
     val uopId = Wire(Valid(UInt(64.W)))
-    uopId.valid := s1_valid
-    uopId.bits := s1_id + i.U
+    uopId.valid := s2_valid
+    uopId.bits := s2_id + i.U
 
     KanataTracer.frontendStage(
       KanataTracer.ShuttleFrontendStage.F2,

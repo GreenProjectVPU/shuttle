@@ -114,7 +114,7 @@ module ScalarBackendStageTracer (
     );
 
     always @(posedge clock) begin
-        if (!reset) begin
+        if (!reset && uopId_valid) begin
             kanata_tracer_scalar_backend_stage(cycle, hartId, portId, stageId, uopId_bits, flush);
         end
     end

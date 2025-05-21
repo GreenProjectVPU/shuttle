@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <ios>
+#include <iostream>
 #include <map>
 #include <optional>
 #include <queue>
@@ -35,7 +36,9 @@ public:
         Com,
     };
 
-    explicit Tracer(uint32_t hart_id) noexcept : hart_id_(hart_id) {}
+    explicit Tracer(uint32_t hart_id) noexcept : hart_id_(hart_id) {
+        output_ << "Kanata\t0004\n";
+    }
 
     void frontend(
         uint64_t cycle,
@@ -44,28 +47,26 @@ public:
         uint64_t uop_id,
         bool flush
     ) noexcept {
+        std::cerr << "frontend(cycle = " << cycle << ", port_id = " << port_id
+                  << ", stage = " << int(stage) << ", uop_id = " << uop_id << ", flush = " << flush
+                  << ")\n";
         auto &instr = instrs_in_flight_[uop_id];
-
-        if (stage == FrontendStage::F0) {
-            instr = Instr(Stage::F0, uop_id);
-        }
 
         switch (stage) {
         case FrontendStage::F0:
-            instr.stage = Stage::F0;
+            instr = Instr(Stage::F0, uop_id);
+            instr.set_stage(cycle, Stage::F0, true);
             break;
 
         case FrontendStage::F1:
-            instr.stage = Stage::F1;
+            instr.set_stage(cycle, Stage::F1);
             break;
 
         case FrontendStage::F2:
-            instr.stage = Stage::F2;
+            instr.set_stage(cycle, Stage::F2);
             instr.f3_deadline = cycle + 1;
             break;
         }
-
-        instr.events.emplace_back(cycle, instr.stage);
 
         if (flush) {
             instr.events.emplace_back(cycle + 1, Event::flush);
@@ -82,11 +83,13 @@ public:
         uint64_t uop_pc,
         bool flush
     ) noexcept {
+        std::cerr << "fetch_buffer(cycle = " << cycle << ", port_id = " << port_id
+                  << ", uop_id = " << uop_id << ", uop_pc = " << uop_pc << ", flush = " << flush
+                  << ")\n";
         auto &instr = instrs_in_flight_[uop_id];
 
-        instr.stage = Stage::F3;
+        instr.set_stage(cycle, Stage::F3);
         instr.pc = uop_pc;
-        instr.events.emplace_back(cycle, instr.stage);
 
         if (flush) {
             instr.events.emplace_back(cycle + 1, Event::flush);
@@ -103,27 +106,28 @@ public:
         uint64_t uop_id,
         bool flush
     ) noexcept {
+        std::cerr << "backend(cycle = " << cycle << ", port_id = " << port_id
+                  << ", stage = " << int(stage) << ", uop_id = " << uop_id << ", flush = " << flush
+                  << ")\n";
         auto &instr = instrs_in_flight_[uop_id];
 
         switch (stage) {
         case BackendStage::Rrd:
-            instr.stage = Stage::Rrd;
+            instr.set_stage(cycle, Stage::Rrd);
             break;
 
         case BackendStage::Ex:
-            instr.stage = Stage::Ex;
+            instr.set_stage(cycle, Stage::Ex);
             break;
 
         case BackendStage::Mem:
-            instr.stage = Stage::Mem;
+            instr.set_stage(cycle, Stage::Mem);
             break;
 
         case BackendStage::Com:
-            instr.stage = Stage::Com;
+            instr.set_stage(cycle, Stage::Com);
             break;
         }
-
-        instr.events.emplace_back(cycle, instr.stage);
 
         if (flush) {
             instr.events.emplace_back(cycle + 1, Event::flush);
@@ -177,6 +181,7 @@ private:
 
     struct Instr {
         Instr() = default;
+
         Instr(Stage stage, uint64_t id) : stage(stage), id(id) {}
 
         Stage stage;
@@ -185,7 +190,7 @@ private:
         uint64_t id;
 
         // a serial instruction id in the log.
-        uint64_t sid;
+        std::optional<uint64_t> sid;
 
         // a retirement id.
         uint64_t rid = 0;
@@ -200,7 +205,23 @@ private:
         std::deque<Event> events;
 
         bool can_print() const noexcept {
-            return finished || stage >= Stage::F3;
+            return finished || stage >= Stage::Rrd;
+        }
+
+        void set_stage(uint64_t cycle, Stage stage, bool force = false) {
+            bool rrd_to_f3 = this->stage == Stage::Rrd && stage == Stage::F3;
+
+            if (force || this->stage != stage && !rrd_to_f3) {
+                this->stage = stage;
+
+                if (!events.empty() && events.back().cycle == cycle &&
+                    std::holds_alternative<Stage>(events.back().kind)) {
+
+                    events.back().kind = stage;
+                } else {
+                    events.emplace_back(cycle, stage);
+                }
+            }
         }
     };
 
@@ -218,30 +239,37 @@ private:
 
     uint64_t find_cutoff() const noexcept {
         uint64_t cutoff = current_cycle_;
+        uint64_t id = -1;
 
         for (const auto &[_, instr] : instrs_in_flight_) {
             if (!instr.finished) {
+                if (first_unprinted_cycle(instr) < cutoff) {
+                    id = instr.id;
+                }
+
                 // the instruction's event queue may yet grow.
                 cutoff = std::min(cutoff, first_unprinted_cycle(instr));
             }
         }
 
+        std::cerr << "    cutoff: " << cutoff << " because of instr " << id << "\n";
+
         return cutoff;
     }
 
     template<class... Args>
-    void print_cmd(std::string_view cmd, Args &&...args) const {
-        output << cmd;
-        ((output << '\t' << args), ...);
-        output << '\n';
+    void print_cmd(std::string_view cmd, Args &&...args) {
+        output_ << cmd;
+        ((output_ << '\t' << args), ...);
+        output_ << '\n';
     }
 
-    void print_cmd_i(const Instr &instr) const {
-        print_cmd("I", instr.sid, instr.id, hart_id_);
+    void print_cmd_i(const Instr &instr) {
+        print_cmd("I", *instr.sid, instr.id, hart_id_);
     }
 
-    void print_cmd_l(const Instr &instr, bool hover_only, std::string_view msg) const {
-        print_cmd("L", instr.sid, int(hover_only), msg);
+    void print_cmd_l(const Instr &instr, bool hover_only, std::string_view msg) {
+        print_cmd("L", *instr.sid, int(hover_only), msg);
     }
 
     static std::string_view stage_name(Stage stage) noexcept {
@@ -274,37 +302,37 @@ private:
         return "<idk>";
     }
 
-    void print_cmd_c(uint64_t n) const {
+    void print_cmd_c(uint64_t n) {
         print_cmd("C", n);
     }
 
     void set_print_cycle(uint64_t to) {
         assert(to >= last_printed_cycle_);
 
-        if (to > 0) {
+        if (to > last_printed_cycle_) {
             print_cmd_c(to - last_printed_cycle_);
         }
 
         last_printed_cycle_ = to;
     }
 
-    void print_cmd_s(const Instr &instr, Stage stage) const {
-        print_cmd("S", instr.sid, 0, stage_name(stage));
+    void print_cmd_s(const Instr &instr, Stage stage) {
+        print_cmd("S", *instr.sid, 0, stage_name(stage));
     }
 
-    void print_cmd_r(const Instr &instr, bool flush) const {
-        print_cmd("R", instr.sid, instr.rid, int(flush));
+    void print_cmd_r(const Instr &instr, bool flush) {
+        print_cmd("R", *instr.sid, instr.rid, int(flush));
     }
 
-    void print_event(Stage stage, const Event &event, const Instr &instr) const {
+    void print_event(Stage stage, const Event &event, const Instr &instr) {
         print_cmd_s(instr, stage);
     }
 
-    void print_event(Event::Retire, const Event &event, const Instr &instr) const {
+    void print_event(Event::Retire, const Event &event, const Instr &instr) {
         print_cmd_r(instr, false);
     }
 
-    void print_event(Event::Flush, const Event &event, const Instr &instr) const {
+    void print_event(Event::Flush, const Event &event, const Instr &instr) {
         print_cmd_r(instr, true);
     }
 
@@ -314,9 +342,11 @@ private:
         current_cycle_ = cycle;
 
         if (progressed) {
-            // remove instructions that didn't make it to the fetch buffer.
+            // remove instructions that didn't make it into the fetch buffer.
             for (auto it = instrs_in_flight_.begin(); it != instrs_in_flight_.end();) {
                 if (missed_fetch_buffer(it->second)) {
+                    std::cerr << "    removing " << it->first
+                              << ": didn't make it into the fetch buffer\n";
                     it = instrs_in_flight_.erase(it);
                 } else {
                     ++it;
@@ -325,9 +355,12 @@ private:
         }
 
         print_instrs();
+
+        std::cerr << "  update(" << cycle << "): " << instrs_in_flight_.size()
+                  << " instrs in flight remain\n";
     }
 
-    void print_cmd_info(const Instr &instr) const {
+    void print_cmd_info(const Instr &instr) {
         if (!instr.pc) {
             return;
         }
@@ -339,7 +372,7 @@ private:
     }
 
     void print_instrs() {
-        using Elem = std::pair<Event, Instr &>;
+        using Elem = std::pair<Event, Instr *>;
 
         uint64_t cutoff = find_cutoff();
         auto cmp = [&](const Elem &lhs, const Elem &rhs) {
@@ -349,11 +382,14 @@ private:
 
         std::vector<uint64_t> finished_instrs;
 
-        for (auto &[id, instr] : instrs_in_flight_) {
-            if (first_unprinted_cycle(instr) > cutoff) {
-                break;
-            }
-
+        for (auto it = instrs_in_flight_.begin(); it != instrs_in_flight_.end(); ++it) {
+            auto id = it->first;
+            auto &instr = it->second;
+            std::cerr << "  - instruction " << id << ": FUC = " << first_unprinted_cycle(instr)
+                      << ", can_print() = " << instr.can_print() << " (stage "
+                      << stage_name(instr.stage) << ", event count " << instr.events.size()
+                      << "); events.size() = " << events.size() << "\n"
+                      << std::flush;
             if (!instr.can_print()) {
                 continue;
             }
@@ -365,7 +401,7 @@ private:
                     break;
                 }
 
-                events.emplace(event, instr);
+                events.emplace(event, &instr);
                 instr.events.pop_front();
             }
 
@@ -374,13 +410,18 @@ private:
             }
         }
 
+        std::cerr << "  processed event count: " << events.size() << "\n" << std::flush;
+
         for (; !events.empty(); events.pop()) {
             const auto &event = events.top().first;
-            auto &instr = events.top().second;
+            auto &instr = *events.top().second;
             set_print_cycle(event.cycle);
 
             if (!instr.started_printing) {
                 instr.started_printing = true;
+                instr.sid = next_sid_++;
+                std::cerr << "  > started instruction " << instr.id << " (sid " << *instr.sid
+                          << ")\n";
                 print_cmd_i(instr);
                 print_cmd_info(instr);
             }
@@ -388,9 +429,37 @@ private:
             std::visit([&](auto &&kind) { print_event(kind, event, instr); }, event.kind);
         }
 
+        std::cerr << "  removing finished instructions (count = " << finished_instrs.size() << ")\n"
+                  << std::flush;
+
         for (auto id : finished_instrs) {
             instrs_in_flight_.erase(id);
         }
+    }
+
+    std::filesystem::path kanata_log_path() const {
+        std::string base_path;
+
+        // NOLINTNEXTLINE(concurrency-mt-unsafe)
+        if (const auto *path = getenv("KANATA_LOG_PATH")) {
+            base_path = path;
+        } else {
+            base_path = "kanata.log";
+        }
+
+        if (base_path.size() > 4 && base_path.substr(base_path.size() - 4) == ".log") {
+            base_path.erase(
+                base_path.begin() + std::string::difference_type(base_path.size() - 4),
+                base_path.end()
+            );
+        }
+
+        std::ostringstream path;
+        path << base_path << ".t" << hart_id_ << ".log";
+
+        std::cerr << "writing the kanata log to " << path.str() << "\n";
+
+        return std::move(path).str();
     }
 
     uint32_t hart_id_;
@@ -402,21 +471,12 @@ private:
     // instructions not yet written to the log. instructions with lower ids start earlier.
     std::map<uint64_t, Instr> instrs_in_flight_;
 
+    std::ofstream output_{kanata_log_path()};
+
     static std::unordered_map<uint32_t, Tracer> tracers;
-    static std::ofstream output;
 };
 
-std::filesystem::path kanata_log_path() {
-    // NOLINTNEXTLINE(concurrency-mt-unsafe)
-    if (const auto *path = getenv("KANATA_LOG_PATH")) {
-        return path;
-    }
-
-    return "kanata.log";
-}
-
 std::unordered_map<uint32_t, Tracer> Tracer::tracers;
-std::ofstream Tracer::output(kanata_log_path());
 
 } // namespace
 
