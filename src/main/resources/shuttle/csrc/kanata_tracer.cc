@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <deque>
 #include <filesystem>
@@ -37,6 +38,7 @@ public:
     };
 
     explicit Tracer(uint32_t hart_id) noexcept : hart_id_(hart_id) {
+        static bool _initialized = [&] { read_disasm(); return true; }();
         output_ << "Kanata\t0004\n";
     }
 
@@ -366,8 +368,12 @@ private:
         }
 
         std::ostringstream msg;
-        // TODO: show disasm.
-        msg << "pc = " << std::hex << *instr.pc;
+        msg << std::hex << *instr.pc;
+
+        if (auto it = disasm.find(*instr.pc); it != disasm.end()) {
+            msg << ": " << it->second;
+        }
+
         print_cmd_l(instr, false, std::move(msg).str());
     }
 
@@ -462,6 +468,59 @@ private:
         return std::move(path).str();
     }
 
+    void read_disasm() {
+        {
+            std::ifstream f("./disasm.d");
+
+            if (!f) {
+                return;
+            }
+
+            std::ostringstream buf;
+            buf << f.rdbuf();
+
+            disasm_contents = std::move(buf).str();
+        }
+
+        for (
+            std::string::size_type start = 0, end = 0;
+            (end = disasm_contents.find('\n', start)) != std::string::npos;
+            start = end + 1
+        ) {
+            auto line = disasm_contents.substr(start, end - start);
+
+            if (!line.empty() && line.back() == '\r') {
+                line.pop_back();
+            }
+
+            unsigned long long addr = 0;
+            size_t disasm_start = 0;
+            auto r = std::sscanf(line.data(), "%llx: %*x %zn", &addr, &disasm_start);
+
+            if (r != 1) {
+                std::cerr << "scanf returned " << r << '\n';
+                std::cerr << "  line: " << line << '\n';
+                continue;
+            }
+
+            if (disasm_start >= line.size()) {
+                std::cerr << "disasm_start = " << disasm_start << " >= line.size() = " << line.size() << '\n';
+                std::cerr << "  line: " << line << '\n';
+                continue;
+            }
+
+            auto d = line.substr(disasm_start);
+
+            for (char &c : d) {
+                if (c == '\t') {
+                    c = ' ';
+                }
+            }
+
+            disasm.insert({addr, std::move(d)});
+        }
+    }
+
     uint32_t hart_id_;
     uint64_t current_cycle_ = 0;
     uint64_t last_printed_cycle_ = 0;
@@ -474,9 +533,13 @@ private:
     std::ofstream output_{kanata_log_path()};
 
     static std::unordered_map<uint32_t, Tracer> tracers;
+    static std::string disasm_contents;
+    static std::unordered_map<uint64_t, std::string> disasm;
 };
 
 std::unordered_map<uint32_t, Tracer> Tracer::tracers;
+std::string Tracer::disasm_contents;
+std::unordered_map<uint64_t, std::string> Tracer::disasm;
 
 } // namespace
 
