@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -38,7 +39,10 @@ public:
     };
 
     explicit Tracer(uint32_t hart_id) noexcept : hart_id_(hart_id) {
-        static bool _initialized = [&] { read_disasm(); return true; }();
+        static bool _initialized = [&] {
+            read_disasm();
+            return true;
+        }();
         output_ << "Kanata\t0004\n";
     }
 
@@ -49,9 +53,12 @@ public:
         uint64_t uop_id,
         bool flush
     ) noexcept {
-        std::cerr << "frontend(cycle = " << cycle << ", port_id = " << port_id
-                  << ", stage = " << int(stage) << ", uop_id = " << uop_id << ", flush = " << flush
-                  << ")\n";
+        if (debug) {
+            std::cerr << "frontend(cycle = " << cycle << ", port_id = " << port_id
+                      << ", stage = " << int(stage) << ", uop_id = " << uop_id
+                      << ", flush = " << flush << ")\n";
+        }
+
         auto &instr = instrs_in_flight_[uop_id];
 
         switch (stage) {
@@ -85,9 +92,12 @@ public:
         uint64_t uop_pc,
         bool flush
     ) noexcept {
-        std::cerr << "fetch_buffer(cycle = " << cycle << ", port_id = " << port_id
-                  << ", uop_id = " << uop_id << ", uop_pc = " << uop_pc << ", flush = " << flush
-                  << ")\n";
+        if (debug) {
+            std::cerr << "fetch_buffer(cycle = " << cycle << ", port_id = " << port_id
+                      << ", uop_id = " << uop_id << ", uop_pc = " << uop_pc << ", flush = " << flush
+                      << ")\n";
+        }
+
         auto &instr = instrs_in_flight_[uop_id];
 
         instr.set_stage(cycle, Stage::F3);
@@ -108,9 +118,12 @@ public:
         uint64_t uop_id,
         bool flush
     ) noexcept {
-        std::cerr << "backend(cycle = " << cycle << ", port_id = " << port_id
-                  << ", stage = " << int(stage) << ", uop_id = " << uop_id << ", flush = " << flush
-                  << ")\n";
+        if (debug) {
+            std::cerr << "backend(cycle = " << cycle << ", port_id = " << port_id
+                      << ", stage = " << int(stage) << ", uop_id = " << uop_id
+                      << ", flush = " << flush << ")\n";
+        }
+
         auto &instr = instrs_in_flight_[uop_id];
 
         switch (stage) {
@@ -254,7 +267,9 @@ private:
             }
         }
 
-        std::cerr << "    cutoff: " << cutoff << " because of instr " << id << "\n";
+        if (debug) {
+            std::cerr << "    cutoff: " << cutoff << " because of instr " << id << "\n";
+        }
 
         return cutoff;
     }
@@ -347,8 +362,11 @@ private:
             // remove instructions that didn't make it into the fetch buffer.
             for (auto it = instrs_in_flight_.begin(); it != instrs_in_flight_.end();) {
                 if (missed_fetch_buffer(it->second)) {
-                    std::cerr << "    removing " << it->first
-                              << ": didn't make it into the fetch buffer\n";
+                    if (debug) {
+                        std::cerr << "    removing " << it->first
+                                  << ": didn't make it into the fetch buffer\n";
+                    }
+
                     it = instrs_in_flight_.erase(it);
                 } else {
                     ++it;
@@ -358,8 +376,10 @@ private:
 
         print_instrs();
 
-        std::cerr << "  update(" << cycle << "): " << instrs_in_flight_.size()
-                  << " instrs in flight remain\n";
+        if (debug) {
+            std::cerr << "  update(" << cycle << "): " << instrs_in_flight_.size()
+                      << " instrs in flight remain\n";
+        }
     }
 
     void print_cmd_info(const Instr &instr) {
@@ -391,11 +411,15 @@ private:
         for (auto it = instrs_in_flight_.begin(); it != instrs_in_flight_.end(); ++it) {
             auto id = it->first;
             auto &instr = it->second;
-            std::cerr << "  - instruction " << id << ": FUC = " << first_unprinted_cycle(instr)
-                      << ", can_print() = " << instr.can_print() << " (stage "
-                      << stage_name(instr.stage) << ", event count " << instr.events.size()
-                      << "); events.size() = " << events.size() << "\n"
-                      << std::flush;
+
+            if (debug) {
+                std::cerr << "  - instruction " << id << ": FUC = " << first_unprinted_cycle(instr)
+                          << ", can_print() = " << instr.can_print() << " (stage "
+                          << stage_name(instr.stage) << ", event count " << instr.events.size()
+                          << "); events.size() = " << events.size() << "\n"
+                          << std::flush;
+            }
+
             if (!instr.can_print()) {
                 continue;
             }
@@ -416,7 +440,9 @@ private:
             }
         }
 
-        std::cerr << "  processed event count: " << events.size() << "\n" << std::flush;
+        if (debug) {
+            std::cerr << "  processed event count: " << events.size() << "\n" << std::flush;
+        }
 
         for (; !events.empty(); events.pop()) {
             const auto &event = events.top().first;
@@ -426,8 +452,12 @@ private:
             if (!instr.started_printing) {
                 instr.started_printing = true;
                 instr.sid = next_sid_++;
-                std::cerr << "  > started instruction " << instr.id << " (sid " << *instr.sid
-                          << ")\n";
+
+                if (debug) {
+                    std::cerr << "  > started instruction " << instr.id << " (sid " << *instr.sid
+                              << ")\n";
+                }
+
                 print_cmd_i(instr);
                 print_cmd_info(instr);
             }
@@ -435,8 +465,11 @@ private:
             std::visit([&](auto &&kind) { print_event(kind, event, instr); }, event.kind);
         }
 
-        std::cerr << "  removing finished instructions (count = " << finished_instrs.size() << ")\n"
-                  << std::flush;
+        if (debug) {
+            std::cerr << "  removing finished instructions (count = " << finished_instrs.size()
+                      << ")\n"
+                      << std::flush;
+        }
 
         for (auto id : finished_instrs) {
             instrs_in_flight_.erase(id);
@@ -482,11 +515,9 @@ private:
             disasm_contents = std::move(buf).str();
         }
 
-        for (
-            std::string::size_type start = 0, end = 0;
-            (end = disasm_contents.find('\n', start)) != std::string::npos;
-            start = end + 1
-        ) {
+        for (std::string::size_type start = 0, end = 0;
+             (end = disasm_contents.find('\n', start)) != std::string::npos;
+             start = end + 1) {
             auto line = disasm_contents.substr(start, end - start);
 
             if (!line.empty() && line.back() == '\r') {
@@ -504,7 +535,8 @@ private:
             }
 
             if (disasm_start >= line.size()) {
-                std::cerr << "disasm_start = " << disasm_start << " >= line.size() = " << line.size() << '\n';
+                std::cerr << "disasm_start = " << disasm_start
+                          << " >= line.size() = " << line.size() << '\n';
                 std::cerr << "  line: " << line << '\n';
                 continue;
             }
@@ -532,11 +564,20 @@ private:
 
     std::ofstream output_{kanata_log_path()};
 
+    static bool debug;
     static std::unordered_map<uint32_t, Tracer> tracers;
     static std::string disasm_contents;
     static std::unordered_map<uint64_t, std::string> disasm;
 };
 
+bool is_debug_enabled() noexcept {
+    // NOLINTNEXTLINE(concurrency-mt-unsafe)
+    auto *env = getenv("KANATA_DEBUG");
+
+    return env != nullptr && *env != '\0' && strcmp(env, "0") != 0;
+}
+
+bool Tracer::debug = is_debug_enabled();
 std::unordered_map<uint32_t, Tracer> Tracer::tracers;
 std::string Tracer::disasm_contents;
 std::unordered_map<uint64_t, std::string> Tracer::disasm;
