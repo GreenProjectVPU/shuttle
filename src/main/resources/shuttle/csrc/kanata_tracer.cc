@@ -98,14 +98,13 @@ public:
                       << ")\n";
         }
 
-        auto &instr = instrs_in_flight_[uop_id];
-
-        instr.set_stage(cycle, Stage::F3);
+        auto &instr = instrs_in_flight_.at(uop_id);
         instr.pc = uop_pc;
 
+        instr.set_stage(cycle, Stage::F3);
+
         if (flush) {
-            instr.events.emplace_back(cycle + 1, Event::flush);
-            instr.finished = true;
+            instr.f3_flushed = {cycle + 1, {cycle + 1, Event::flush}};
         }
 
         update(cycle);
@@ -124,7 +123,7 @@ public:
                       << ", flush = " << flush << ")\n";
         }
 
-        auto &instr = instrs_in_flight_[uop_id];
+        auto &instr = instrs_in_flight_.at(uop_id);
 
         switch (stage) {
         case BackendStage::Rrd:
@@ -165,6 +164,14 @@ public:
         auto [it, _] = tracers.insert({hart_id, Tracer(hart_id)});
 
         return it->second;
+    }
+
+    static void finish() {
+        for (auto &[_, tracer] : tracers) {
+            tracer.print_instrs(true);
+        }
+
+        tracers.clear();
     }
 
 private:
@@ -214,19 +221,30 @@ private:
         // not been added to the fetch buffer.
         uint64_t f3_deadline;
 
+        // if flushed as Stage::F3, the cycle number after which we record the flush event.
+        // (the instruction may also land into the backend pipeline,
+        // in which case we ignore the flushing.)
+        std::optional<std::pair<uint64_t, Event>> f3_flushed;
+
+        uint64_t entered_rrd_at;
+
         std::optional<uint64_t> pc;
         bool finished = false;
         bool started_printing = false;
         std::deque<Event> events;
 
-        bool can_print() const noexcept {
-            return finished || stage >= Stage::Rrd;
+        bool can_print(uint64_t cycle) const noexcept {
+            return finished || stage >= Stage::Rrd && entered_rrd_at + 1 <= cycle;
         }
 
         void set_stage(uint64_t cycle, Stage stage, bool force = false) {
             bool rrd_to_f3 = this->stage == Stage::Rrd && stage == Stage::F3;
 
             if (force || this->stage != stage && !rrd_to_f3) {
+                if (this->stage < Stage::Rrd && stage >= Stage::Rrd) {
+                    entered_rrd_at = cycle;
+                }
+
                 this->stage = stage;
 
                 if (!events.empty() && events.back().cycle == cycle &&
@@ -253,7 +271,7 @@ private:
     }
 
     uint64_t find_cutoff() const noexcept {
-        uint64_t cutoff = current_cycle_;
+        uint64_t cutoff = current_cycle_ == 0 ? 0 : current_cycle_ - 1;
         uint64_t id = -1;
 
         for (const auto &[_, instr] : instrs_in_flight_) {
@@ -372,6 +390,33 @@ private:
                     ++it;
                 }
             }
+
+            // record flush events for instructions past their f3_flushed deadline.
+            for (auto &[id, instr] : instrs_in_flight_) {
+                if (instr.f3_flushed && instr.stage != Stage::F3) {
+                    if (debug) {
+                        std::cerr << "    disarming flush event at F3 for instruction " << id
+                                  << " (at " << instr.f3_flushed->first << ") in stage "
+                                  << stage_name(instr.stage) << '\n';
+                    }
+
+                    instr.f3_flushed = {};
+
+                    continue;
+                }
+
+                if (instr.f3_flushed && instr.f3_flushed->first >= current_cycle_) {
+
+                    if (debug) {
+                        std::cerr << "    recording flush event at F3 for instruction " << id
+                                  << " (at " << instr.f3_flushed->first << ")\n";
+                    }
+
+                    instr.events.push_back(instr.f3_flushed->second);
+                    instr.f3_flushed = {};
+                    instr.finished = true;
+                }
+            }
         }
 
         print_instrs();
@@ -397,12 +442,18 @@ private:
         print_cmd_l(instr, false, std::move(msg).str());
     }
 
-    void print_instrs() {
+    void print_instrs(bool force = false) {
         using Elem = std::pair<Event, Instr *>;
 
+        if (current_cycle_ == 0) {
+            return;
+        }
+
         uint64_t cutoff = find_cutoff();
+
         auto cmp = [&](const Elem &lhs, const Elem &rhs) {
-            return lhs.first.cycle > rhs.first.cycle;
+            return lhs.first.cycle > rhs.first.cycle ||
+                   (lhs.first.cycle == rhs.first.cycle && lhs.second->id > rhs.second->id);
         };
         std::priority_queue<Elem, std::vector<Elem>, decltype(cmp)> events(cmp);
 
@@ -414,20 +465,22 @@ private:
 
             if (debug) {
                 std::cerr << "  - instruction " << id << ": FUC = " << first_unprinted_cycle(instr)
-                          << ", can_print() = " << instr.can_print() << " (stage "
+                          << ", can_print() = " << instr.can_print(current_cycle_) << " (stage "
                           << stage_name(instr.stage) << ", event count " << instr.events.size()
-                          << "); events.size() = " << events.size() << "\n"
+                          << "), finished = " << instr.finished
+                          << ", started_printing = " << instr.started_printing
+                          << "; events.size() = " << events.size() << "\n"
                           << std::flush;
             }
 
-            if (!instr.can_print()) {
+            if (!instr.can_print(current_cycle_)) {
                 continue;
             }
 
             while (!instr.events.empty()) {
                 auto &event = instr.events.front();
 
-                if (event.cycle > cutoff) {
+                if (event.cycle > cutoff || force) {
                     break;
                 }
 
@@ -619,4 +672,8 @@ extern "C" void kanata_tracer_scalar_backend_stage(
     Tracer::get_for(hart_id).backend(
         cycle, port_id, static_cast<Tracer::BackendStage>(stage_id), uop_id, flush
     );
+}
+
+extern "C" void kanata_tracer_finish() {
+    Tracer::finish();
 }

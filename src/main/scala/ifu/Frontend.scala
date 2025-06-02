@@ -244,7 +244,7 @@ class ShuttleFrontendModule(outer: ShuttleFrontend) extends LazyModuleImp(outer)
       io.cpu.hartid,
       i.U,
       uopId,
-      f1_clear
+      f2_clear
     )
   }
 

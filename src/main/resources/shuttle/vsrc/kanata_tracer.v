@@ -25,6 +25,8 @@ import "DPI-C" function void kanata_tracer_scalar_backend_stage(
     input bit flush
 );
 
+import "DPI-C" function void kanata_tracer_finish();
+
 module KanataTracerCycleCounter (
     input logic clock,
     input logic reset,
@@ -91,6 +93,10 @@ module FetchBufferTracer #(
         if (!reset && uopId_valid) begin
             kanata_tracer_fetch_buffer(cycle, hartId, portId, uopId_bits, uopPc, flush);
         end
+    end
+
+    final begin
+        kanata_tracer_finish();
     end
 
 endmodule
